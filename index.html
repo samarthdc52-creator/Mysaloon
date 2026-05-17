@@ -25,21 +25,33 @@
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
 
         @media print {
-            @page { size: auto; margin: 0mm; }
-            .no-print { display: none !important; }
-            body { background: white !important; margin: 0; padding: 0; }
-            body * { visibility: hidden; }
-            #printable-bill, #printable-bill * { visibility: visible !important; }
-            #printable-bill {
-                position: absolute; 
-                left: 0; 
-                top: 0; 
-                width: 100%; 
+            body { 
+                background: white !important; 
+                color: black !important;
                 margin: 0;
-                padding: 40px !important; 
-                background: white;
+                padding: 0;
             }
-            .overflow-hidden { overflow: visible !important; }
+            /* Hide the main React application contents during printing completely */
+            #root { 
+                display: none !important; 
+            }
+            /* Display ONLY our custom print-root portal */
+            #print-root { 
+                display: block !important; 
+                width: 100% !important;
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                margin: 0 !important;
+                padding: 10px !important;
+            }
+            .no-print { display: none !important; }
+        }
+
+        @media screen {
+            #print-root {
+                display: none;
+            }
         }
 
         .fade-in { animation: fadeIn 0.4s ease-out; }
@@ -67,7 +79,11 @@
         };
     </script>
 
+    <!-- React Application mount point -->
     <div id="root"></div>
+
+    <!-- Standalone system print portal mount point -->
+    <div id="print-root"></div>
 
     <!-- Firebase Cloud Engine -->
     <script type="module">
@@ -137,13 +153,37 @@
         );
 
         // --- AUTHENTICATION SCREEN ---
-        const AuthScreen = ({ authMode, setAuthMode, authError, handleLogin, handleSignup }) => {
+        const AuthScreen = ({ authMode, setAuthMode, authError, handleLogin, handleSignup, handleReset, importDbData }) => {
             const [u, setU] = useState(''); const [p, setP] = useState(''); const [s, setS] = useState(''); const [l, setL] = useState('');
+            const fileInputRef = useRef(null);
             
             const onSubmit = (e) => {
                 e.preventDefault();
                 if (authMode === 'login') handleLogin(u, p);
                 else if (authMode === 'signup') handleSignup(u, p, s, l);
+            };
+
+            const triggerFileImport = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    try {
+                        const parsed = JSON.parse(evt.target.result);
+                        const success = importDbData(parsed);
+                        if (success) {
+                            if (parsed._username && parsed.password) {
+                                handleLogin(parsed._username, parsed.password);
+                            } else if (parsed.users) {
+                                const firstUser = Object.keys(parsed.users)[0];
+                                if (firstUser) handleLogin(firstUser, parsed.users[firstUser].password);
+                            }
+                        }
+                    } catch (err) {
+                        console.error("Backup recovery error", err);
+                    }
+                };
+                reader.readAsText(file);
             };
 
             return (
@@ -154,7 +194,7 @@
                     </div>
 
                     <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden relative z-10 fade-in">
-                        <form className="p-10" onSubmit={onSubmit}>
+                        <form className="p-10 pb-6" onSubmit={onSubmit}>
                             <div className="flex flex-col items-center mb-8">
                                 <div className="bg-purple-600 p-4 rounded-[2rem] shadow-xl overflow-hidden flex items-center justify-center w-24 h-24 mb-4 border-4 border-slate-50">
                                     <Icon name="Cloud" size={40} className="text-white" />
@@ -193,12 +233,24 @@
                                 </button>
                             </div>
                             
-                            <div className="mt-8 flex flex-col items-center gap-3 border-t border-slate-100 pt-6">
+                            <div className="mt-6 flex flex-col items-center gap-3 border-t border-slate-100 pt-5">
                                 {authMode === 'login' ? (
-                                    <button type="button" onClick={() => {setAuthMode('signup'); setAuthError('');}} className="text-purple-600 font-bold text-sm">Create New Shop Account</button>
-                                ) : <button type="button" onClick={() => {setAuthMode('login'); setAuthError('');}} className="text-slate-400 font-bold text-sm">Return to Login</button>}
+                                    <button type="button" onClick={() => {setAuthMode('signup');}} className="text-purple-600 font-bold text-sm">Create New Shop Account</button>
+                                ) : <button type="button" onClick={() => {setAuthMode('login');}} className="text-slate-400 font-bold text-sm">Return to Login</button>}
                             </div>
                         </form>
+
+                        {}
+                        {/* Instant Device Switch File Recovery */}
+                        <div className="px-10 pb-8 pt-2">
+                            <div className="border-2 border-dashed border-slate-200 hover:border-purple-300 bg-slate-50 rounded-2xl p-4 text-center transition-all">
+                                <p className="text-[10px] font-black uppercase text-slate-400 tracking-wider mb-2">Switching Device / Backup recovery?</p>
+                                <input type="file" ref={fileInputRef} accept=".json" onChange={triggerFileImport} className="hidden" />
+                                <button type="button" onClick={() => fileInputRef.current.click()} className="text-xs bg-white border border-slate-200 text-purple-600 font-black px-4 py-2.5 rounded-xl hover:bg-purple-50 transition-colors shadow-sm flex items-center gap-2 mx-auto">
+                                    <Icon name="UploadCloud" size={14} /> Restore Credentials File
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             );
@@ -247,7 +299,7 @@
             );
         };
 
-        const BillingView = ({ employees, services, createBill, salonInfo, currentUser }) => {
+        const BillingView = ({ employees, services, createBill, salonInfo, currentUser, triggerAlert }) => {
             const [billForm, setBillForm] = useState({ customerName: '', employeeId: '', customerPhone: '', taxType: 'WITHOUT_GST', paymentMode: 'CASH', selectedServices: [], customGstPercent: salonInfo.defaultGstPercent || 18 });
             const [search, setSearch] = useState('');
             const activeEmployees = employees.filter(e => e.status === 'active');
@@ -261,7 +313,7 @@
             return (
                 <form className="grid grid-cols-1 lg:grid-cols-3 gap-8 fade-in" onSubmit={(e) => { 
                     e.preventDefault(); 
-                    if (!billForm.selectedServices.length) return alert("Please select at least 1 service."); 
+                    if (!billForm.selectedServices.length) return triggerAlert("Please select at least 1 service to settle a bill."); 
                     createBill({ ...billForm, subtotal, tax, total }); 
                     setBillForm({ customerName: '', employeeId: '', customerPhone: '', taxType: 'WITHOUT_GST', paymentMode: 'CASH', selectedServices: [], customGstPercent: salonInfo.defaultGstPercent || 18 }); 
                 }}>
@@ -315,7 +367,7 @@
             );
         };
 
-        const EditBillModal = ({ bill, employees, services, onClose, onSave }) => {
+        const EditBillModal = ({ bill, employees, services, onClose, onSave, triggerAlert }) => {
             const [billForm, setBillForm] = useState({
                 ...bill,
                 selectedServices: bill.selectedServices.map(s => ({...s, cartId: s.cartId || Date.now().toString() + Math.random()}))
@@ -371,30 +423,77 @@
                         </div>
                         <div className="p-8 bg-slate-900 flex justify-between items-center shrink-0">
                             <div className="text-white"><p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">New Total Payable</p><p className="text-4xl font-black text-purple-400">₹{total.toFixed(2)}</p></div>
-                            <button onClick={() => { if (!billForm.selectedServices.length) return alert("Select at least 1 service."); onSave(bill, billForm); }} className="px-10 py-5 bg-purple-600 text-white rounded-[1.5rem] font-black hover:bg-purple-500 transition-all flex items-center gap-3 text-lg"><Icon name="Save" /> Update Bill</button>
+                            <button onClick={() => { if (!billForm.selectedServices.length) return triggerAlert("Select at least 1 service."); onSave(bill, billForm); }} className="px-10 py-5 bg-purple-600 text-white rounded-[1.5rem] font-black hover:bg-purple-500 transition-all flex items-center gap-3 text-lg"><Icon name="Save" /> Update Bill</button>
                         </div>
                     </div>
                 </div>
             );
         };
 
-        const HistoryView = ({ bills, employees, services, setCurrentInvoice, updateBill, deleteBill }) => {
-            const [search, setSearch] = useState(''); const [start, setStart] = useState(''); const [end, setEnd] = useState(''); const [payFilter, setPayFilter] = useState('ALL');
-            const [editingBill, setEditingBill] = useState(null);
+        // --- SEPARATE INVOICES (OLD BILLS) LIST VIEW ---
+        const InvoicesView = ({ bills, employees, services, setCurrentInvoice, setEditingBill, triggerConfirm, deleteBill }) => {
+            const [search, setSearch] = useState('');
 
             const filtered = useMemo(() => bills.filter(b => { 
-                const matchesSearch = (b.customerName || '').toLowerCase().includes(search.toLowerCase()); 
+                return (b.customerName || '').toLowerCase().includes(search.toLowerCase()) || 
+                       (b.invoiceNo || '').toLowerCase().includes(search.toLowerCase());
+            }), [bills, search]);
+
+            return (
+                <div className="space-y-6 fade-in">
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div>
+                            <h2 className="text-3xl font-black text-slate-800 tracking-tight uppercase">Invoices Registry</h2>
+                            <p className="text-xs font-bold text-slate-400 tracking-wide mt-1">Re-print thermal bills, edit clients, or delete transactions.</p>
+                        </div>
+                        <div className="relative w-full md:w-80">
+                            <Icon name="Search" className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                            <input type="text" placeholder="Search Client or Invoice..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-12 pr-4 py-3.5 border border-slate-200 rounded-2xl font-bold bg-white focus:ring-2 focus:ring-purple-500 outline-none shadow-sm text-sm" />
+                        </div>
+                    </div>
+
+                    <div className="space-y-4">
+                        {filtered.map(bill => (
+                            <div key={bill.id} className="bg-white p-6 rounded-[2rem] border border-slate-100 flex flex-col lg:flex-row justify-between items-center gap-6 hover:shadow-lg transition-all border-l-8 border-l-purple-500">
+                                <div className="flex gap-4 items-center w-full lg:w-auto">
+                                    <div className="bg-slate-900 p-4 rounded-2xl text-purple-400 shadow-md shrink-0"><Icon name="FileText" size={28} /></div>
+                                    <div>
+                                        <p className="font-black text-slate-900 text-xl tracking-tighter">{bill.customerName || 'Walk-in Client'}</p>
+                                        <p className="text-[10px] text-slate-400 font-black uppercase mt-1">{bill.dateString} • {bill.paymentMode} • By {employees.find(e=>e.id===bill.employeeId)?.name || 'Admin'}</p>
+                                    </div>
+                                </div>
+                                <div className="text-right flex items-center justify-between lg:justify-end gap-4 w-full lg:w-auto bg-slate-50 lg:bg-transparent p-4 lg:p-0 rounded-2xl shrink-0">
+                                    <p className="text-2xl font-black text-slate-900 tracking-tighter mr-2">₹{Number(bill.total).toFixed(2)}</p>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => setEditingBill(bill)} className="p-3 bg-purple-50 text-purple-600 rounded-xl hover:bg-purple-600 hover:text-white transition-all" title="Edit Bill"><Icon name="Edit" size={18} /></button>
+                                        <button onClick={() => setCurrentInvoice(bill)} className="p-3 bg-slate-100 text-slate-900 rounded-xl hover:bg-slate-900 hover:text-white transition-all" title="Print Receipt"><Icon name="Printer" size={18} /></button>
+                                        <button onClick={() => triggerConfirm('Delete this bill permanently?', () => deleteBill(bill.id))} className="p-3 bg-red-50 text-red-500 rounded-xl hover:bg-red-600 hover:text-white transition-all" title="Delete Bill"><Icon name="Trash2" size={18} /></button>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                        {filtered.length === 0 && <div className="py-24 text-center bg-white rounded-[3rem] border-4 border-dashed border-slate-100 text-slate-400 font-black uppercase tracking-widest"><Icon name="History" className="w-12 h-12 mx-auto mb-4 text-slate-200" />No matching bills found</div>}
+                    </div>
+                </div>
+            );
+        };
+
+        // --- REVENUE HISTORY & STATS VIEW ---
+        const HistoryView = ({ bills, employees, services, triggerAlert }) => {
+            const [start, setStart] = useState(''); const [end, setEnd] = useState(''); const [payFilter, setPayFilter] = useState('ALL');
+
+            const filtered = useMemo(() => bills.filter(b => { 
                 const t = b.timestamp; 
                 const matchesStart = start ? t >= new Date(start).getTime() : true; 
                 const matchesEnd = end ? t <= new Date(end).setHours(23,59,59,999) : true; 
                 const matchesPay = payFilter === 'ALL' ? true : b.paymentMode === payFilter;
-                return matchesSearch && matchesStart && matchesEnd && matchesPay; 
-            }), [bills, search, start, end, payFilter]);
+                return matchesStart && matchesEnd && matchesPay; 
+            }), [bills, start, end, payFilter]);
 
             const revenue = useMemo(() => filtered.reduce((acc, c) => ({ total: acc.total + Number(c.total), cash: acc.cash + (c.paymentMode === 'CASH' ? Number(c.total) : 0), online: acc.online + (c.paymentMode === 'ONLINE' ? Number(c.total) : 0), count: acc.count + 1 }), { total: 0, cash: 0, online: 0, count: 0 }), [filtered]);
 
             const downloadPDF = () => {
-                if (!window.jspdf) return alert("PDF engine loading. Please wait a moment.");
+                if (!window.jspdf) return triggerAlert("PDF engine loading. Please wait a moment.");
                 const { jsPDF } = window.jspdf;
                 const doc = new jsPDF();
                 doc.setFontSize(20); doc.setTextColor(15, 23, 42); doc.text("Salon Revenue Statement", 14, 22);
@@ -420,43 +519,27 @@
             return (
                 <div className="space-y-8 fade-in">
                     <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6 no-print">
-                        <h2 className="text-3xl font-black text-slate-800 tracking-tight uppercase">Revenue Analytics</h2>
+                        <div>
+                            <h2 className="text-3xl font-black text-slate-800 tracking-tight uppercase">Revenue Analytics</h2>
+                            <p className="text-xs font-bold text-slate-400 mt-1">Export filtered tables directly to clean PDF files.</p>
+                        </div>
                         <div className="flex flex-wrap items-center gap-4 w-full xl:w-auto">
-                            <div className="relative flex-1 min-w-[200px]"><Icon name="Search" className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} /><input type="text" placeholder="Search Client..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-12 pr-4 py-3 border border-slate-200 rounded-2xl font-bold bg-white focus:ring-2 focus:ring-purple-500 outline-none" /></div>
-                            <select value={payFilter} onChange={e => setPayFilter(e.target.value)} className="px-4 py-3 border border-slate-200 rounded-2xl font-bold bg-white focus:ring-2 focus:ring-purple-500 outline-none"><option value="ALL">All Payments</option><option value="CASH">Cash Only</option><option value="ONLINE">Online Only</option></select>
+                            <select value={payFilter} onChange={e => setPayFilter(e.target.value)} className="px-4 py-3 border border-slate-200 rounded-2xl font-bold bg-white focus:ring-2 focus:ring-purple-500 outline-none text-sm"><option value="ALL">All Payments</option><option value="CASH">Cash Only</option><option value="ONLINE">Online Only</option></select>
                             <div className="flex items-center gap-2 bg-white p-2 rounded-2xl border border-slate-200"><Icon name="Calendar" className="text-purple-500" size={16} /><input type="date" value={start} onChange={e => setStart(e.target.value)} className="bg-transparent border-0 text-xs font-black uppercase outline-none" /><span className="text-[10px] text-slate-300">TO</span><input type="date" value={end} onChange={e => setEnd(e.target.value)} className="bg-transparent border-0 text-xs font-black uppercase outline-none" /></div>
                             <button onClick={downloadPDF} className="px-5 py-3 bg-slate-900 text-white rounded-2xl hover:bg-slate-800 transition-all font-black text-sm flex items-center gap-2"><Icon name="Download" size={16}/> Export PDF</button>
                         </div>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 no-print"><div className="bg-slate-900 text-white p-8 rounded-[2.5rem] border-4 border-slate-800"><p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Total Period Revenue</p><p className="text-4xl font-black tracking-tighter">₹{revenue.total.toLocaleString()}</p></div><div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 flex flex-col justify-center"><p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Cash Total</p><p className="text-2xl font-black text-slate-800">₹{revenue.cash.toLocaleString()}</p></div><div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 flex flex-col justify-center"><p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Online Total</p><p className="text-2xl font-black text-purple-600">₹{revenue.online.toLocaleString()}</p></div><div className="bg-purple-50 p-8 rounded-[2.5rem] border border-purple-100 flex flex-col justify-center"><p className="text-[10px] font-black uppercase tracking-widest text-purple-400 mb-2">Bills Settled</p><p className="text-2xl font-black text-purple-800">{revenue.count}</p></div></div>
-                    <div className="space-y-6">
-                        {filtered.map(bill => (
-                            <div key={bill.id} className="bg-white p-8 rounded-[2.5rem] border border-slate-100 flex flex-col lg:flex-row justify-between items-center gap-8 hover:shadow-xl transition-all border-l-8 border-l-purple-500">
-                                <div className="flex gap-6 items-center w-full lg:w-auto">
-                                    <div className="bg-slate-900 p-5 rounded-3xl text-purple-400 shadow-xl shrink-0"><Icon name="FileText" size={32} /></div>
-                                    <div><p className="font-black text-slate-900 text-2xl tracking-tighter">{bill.customerName || 'Walk-in Client'}</p><p className="text-xs text-slate-400 font-black uppercase mt-2">{bill.dateString} • {bill.paymentMode} • By {employees.find(e=>e.id===bill.employeeId)?.name || 'Admin'}</p></div>
-                                </div>
-                                <div className="text-right flex items-center gap-4 w-full lg:w-auto bg-slate-50 lg:bg-transparent p-6 lg:p-0 rounded-3xl shrink-0">
-                                    <p className="text-3xl font-black text-slate-900 tracking-tighter mr-4">₹{Number(bill.total).toFixed(2)}</p>
-                                    <button onClick={() => setEditingBill(bill)} className="p-4 bg-purple-50 text-purple-600 rounded-2xl hover:bg-purple-600 hover:text-white transition-all" title="Edit Bill"><Icon name="Edit" size={24} /></button>
-                                    <button onClick={() => setCurrentInvoice(bill)} className="p-4 bg-slate-50 text-slate-900 rounded-2xl hover:bg-slate-900 hover:text-white transition-all" title="Print Receipt"><Icon name="Printer" size={24} /></button>
-                                    <button onClick={() => { if(window.confirm('Delete this bill permanently?')) deleteBill(bill.id); }} className="p-4 bg-red-50 text-red-500 rounded-2xl hover:bg-red-600 hover:text-white transition-all" title="Delete Bill"><Icon name="Trash2" size={24} /></button>
-                                </div>
-                            </div>
-                        ))}
-                        {filtered.length === 0 && <div className="py-32 text-center bg-white rounded-[3rem] border-4 border-dashed border-slate-100 text-slate-400 font-black uppercase tracking-widest"><Icon name="History" className="w-16 h-16 mx-auto mb-6 text-slate-200" />No matching bills found</div>}
-                    </div>
-                    {editingBill && <EditBillModal bill={editingBill} employees={employees} services={services} onClose={() => setEditingBill(null)} onSave={(oldBill, newForm) => { updateBill(oldBill, newForm); setEditingBill(null); }} />}
                 </div>
             );
         };
 
-        const CampaignsView = ({ salonInfo }) => {
+        // --- CAMPAIGNS & MARKETING STUDIO ---
+        const CampaignsView = ({ salonInfo, triggerAlert }) => {
             const [numbers, setNumbers] = useState('');
             const [queue, setQueue] = useState([]);
             const [currentIndex, setCurrentIndex] = useState(0);
             
-            // Poster Builder State
             const [title, setTitle] = useState('FESTIVE SALE!');
             const [subtitle, setSubtitle] = useState('Flat 50% Off on Premium Services');
             const [offers, setOffers] = useState([
@@ -470,13 +553,12 @@
             const canvasRef = useRef(null);
 
             const addOffer = () => {
-                if (offers.length >= 10) return alert("Max 10 offers");
+                if (offers.length >= 10) return triggerAlert("Max 10 offers");
                 setOffers([...offers, { id: Date.now(), text: '' }]);
             };
             const updateOffer = (id, val) => setOffers(offers.map(o => o.id === id ? { ...o, text: val } : o));
             const removeOffer = (id) => setOffers(offers.filter(o => o.id !== id));
 
-            // Advanced Canvas Generator
             useEffect(() => {
                 const canvas = canvasRef.current;
                 if (!canvas) return;
@@ -495,28 +577,21 @@
                 };
 
                 const drawContent = (isDarkText) => {
-                    // Draw Frosted Box
                     ctx.fillStyle = isDarkText ? 'rgba(255, 255, 255, 0.85)' : 'rgba(15, 23, 42, 0.85)';
                     const boxX = 80, boxY = 270, boxW = 920, boxH = 580, r = 40;
                     ctx.beginPath();
-                    ctx.moveTo(boxX + r, boxY);
-                    ctx.lineTo(boxX + boxW - r, boxY);
+                    ctx.moveTo(boxX + r, boxY); ctx.lineTo(boxX + boxW - r, boxY);
                     ctx.quadraticCurveTo(boxX + boxW, boxY, boxX + boxW, boxY + r);
                     ctx.lineTo(boxX + boxW, boxY + boxH - r);
                     ctx.quadraticCurveTo(boxX + boxW, boxY + boxH, boxX + boxW - r, boxY + boxH);
                     ctx.lineTo(boxX + r, boxY + boxH);
                     ctx.quadraticCurveTo(boxX, boxY + boxH, boxX, boxY + boxH - r);
-                    ctx.lineTo(boxX, boxY + r);
-                    ctx.quadraticCurveTo(boxX, boxY, boxX + r, boxY);
-                    ctx.closePath();
-                    ctx.fill();
+                    ctx.lineTo(boxX, boxY + r); ctx.quadraticCurveTo(boxX, boxY, boxX + r, boxY);
+                    ctx.closePath(); ctx.fill();
 
-                    // Subtle Border
                     ctx.strokeStyle = isDarkText ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.15)';
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
+                    ctx.lineWidth = 2; ctx.stroke();
 
-                    // Draw Text
                     ctx.textAlign = 'center';
                     ctx.fillStyle = isDarkText ? '#0f172a' : '#ffffff';
                     ctx.shadowColor = 'rgba(0,0,0,0.6)';
@@ -526,10 +601,9 @@
                     ctx.shadowBlur = 0; 
 
                     ctx.font = '900 38px sans-serif'; 
-                    ctx.fillStyle = isDarkText ? '#d97706' : '#fde047'; // Gold subtitle
+                    ctx.fillStyle = isDarkText ? '#d97706' : '#fde047';
                     ctx.fillText(subtitle.toUpperCase(), 540, 220);
 
-                    // Draw Offers (Auto-Columns)
                     ctx.fillStyle = isDarkText ? '#1e293b' : '#f8fafc';
                     ctx.font = '700 34px sans-serif';
                     const startY = 350; const rowH = 75;
@@ -543,10 +617,9 @@
                             const rowY = Math.floor(i / 2);
                             ctx.fillText(`✦  ${o.text}`, colX, startY + (rowY * rowH));
                         });
-                        ctx.textAlign = 'center'; // reset
+                        ctx.textAlign = 'center';
                     }
 
-                    // Footer
                     const footerY = 970;
                     ctx.fillStyle = isDarkText ? '#d97706' : '#fde047';
                     ctx.font = '900 46px sans-serif'; 
@@ -557,7 +630,6 @@
                     ctx.fillText(`Book Appointment Today: ${salonInfo.mobile || 'Contact Us'}`, 540, footerY + 50);
                 };
 
-                // Apply Themes
                 if (themeMode === 'custom' && customBg) {
                     const img = new window.Image();
                     img.crossOrigin = "Anonymous";
@@ -566,18 +638,11 @@
                         const x = (1080 / 2) - (img.width / 2) * scale;
                         const y = (1080 / 2) - (img.height / 2) * scale;
                         ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
-                        
-                        // Tint Background
                         ctx.fillStyle = textColor === 'white' ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.6)';
                         ctx.fillRect(0,0,1080,1080);
-
-                        // Double Line Border Effect
                         ctx.strokeStyle = textColor === 'white' ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.3)';
-                        ctx.lineWidth = 3;
-                        ctx.strokeRect(40, 40, 1000, 1000);
-                        ctx.lineWidth = 1;
-                        ctx.strokeRect(52, 52, 976, 976);
-                        
+                        ctx.lineWidth = 3; ctx.strokeRect(40, 40, 1000, 1000);
+                        ctx.lineWidth = 1; ctx.strokeRect(52, 52, 976, 976);
                         drawContent(textColor === 'dark');
                     };
                     img.onerror = () => {
@@ -589,21 +654,13 @@
                 } else {
                     const tc = themeConfig[themeMode] || themeConfig.neon;
                     const grad = ctx.createLinearGradient(0, 0, 1080, 1080);
-                    grad.addColorStop(0, tc.bg[0]);
-                    grad.addColorStop(1, tc.bg[1]);
-                    ctx.fillStyle = grad;
-                    ctx.fillRect(0, 0, 1080, 1080);
-                    
-                    // Double Line Border Effect
+                    grad.addColorStop(0, tc.bg[0]); grad.addColorStop(1, tc.bg[1]);
+                    ctx.fillStyle = grad; ctx.fillRect(0, 0, 1080, 1080);
                     ctx.strokeStyle = tc.text === 'dark' ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.2)';
-                    ctx.lineWidth = 3;
-                    ctx.strokeRect(40, 40, 1000, 1000);
-                    ctx.lineWidth = 1;
-                    ctx.strokeRect(52, 52, 976, 976);
-                    
+                    ctx.lineWidth = 3; ctx.strokeRect(40, 40, 1000, 1000);
+                    ctx.lineWidth = 1; ctx.strokeRect(52, 52, 976, 976);
                     drawContent(tc.text === 'dark');
                 }
-
             }, [title, subtitle, offers, themeMode, customBg, textColor, salonInfo.name, salonInfo.mobile]);
 
             const downloadPoster = () => {
@@ -614,7 +671,7 @@
 
             const generateQueue = () => {
                 const parsed = numbers.split(/[\s,\n]+/).map(n => n.replace(/\D/g, '')).filter(n => n.length >= 10);
-                if (!parsed.length) return alert("No valid phone numbers found.");
+                if (!parsed.length) return triggerAlert("No valid phone numbers found.");
                 setQueue(parsed); setCurrentIndex(0); 
             };
 
@@ -698,7 +755,7 @@
             );
         };
 
-        const EmployeesView = ({ employees, addEmployee, deleteEmployee, updateEmployee }) => {
+        const EmployeesView = ({ employees, addEmployee, deleteEmployee, updateEmployee, triggerConfirm }) => {
             const [showAdd, setShowAdd] = useState(false);
             const [newName, setNewName] = useState('');
             const [newPhone, setNewPhone] = useState('');
@@ -747,7 +804,7 @@
                                     </div>
                                     <div className="absolute top-8 right-8 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                         <button onClick={() => { setEditingId(emp.id); setEditForm({ name: emp.name, phone: emp.phone || '' }); }} className="text-slate-400 hover:text-purple-600 transition-colors bg-slate-50 hover:bg-purple-50 p-3 rounded-xl"><Icon name="Edit" size={18} /></button>
-                                        <button onClick={() => { if(window.confirm('Move this staff member to trash?')) deleteEmployee(emp.id); }} className="text-slate-400 hover:text-red-500 transition-colors bg-slate-50 hover:bg-red-50 p-3 rounded-xl"><Icon name="Trash2" size={18} /></button>
+                                        <button onClick={() => { triggerConfirm('Move this staff member to trash?', () => deleteEmployee(emp.id)); }} className="text-slate-400 hover:text-red-500 transition-colors bg-slate-50 hover:bg-red-50 p-3 rounded-xl"><Icon name="Trash2" size={18} /></button>
                                     </div>
                                 </div>
                             );
@@ -758,7 +815,7 @@
             );
         };
 
-        const ServicesView = ({ services, addService, updateService, deleteService }) => {
+        const ServicesView = ({ services, addService, updateService, deleteService, triggerConfirm }) => {
             const [showAdd, setShowAdd] = useState(false);
             const [newService, setNewService] = useState({ name: '', price: '' });
             const [search, setSearch] = useState('');
@@ -802,7 +859,7 @@
                                             <td className="px-8 py-6 font-black text-slate-900">₹{Number(service.price).toFixed(2)}</td>
                                             <td className="px-8 py-6 flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                                 <button onClick={() => { setEditingId(service.id); setEditForm({ name: service.name, price: service.price }); }} className="text-slate-400 hover:text-purple-600 p-3 bg-white border border-slate-100 hover:border-purple-200 rounded-xl transition-all shadow-sm"><Icon name="Edit" size={18} /></button>
-                                                <button onClick={() => { if(window.confirm('Delete this service?')) deleteService(service.id); }} className="text-slate-400 hover:text-red-500 p-3 bg-white border border-slate-100 hover:border-red-200 rounded-xl transition-all shadow-sm"><Icon name="Trash2" size={18} /></button>
+                                                <button onClick={() => { triggerConfirm('Delete this service?', () => deleteService(service.id)); }} className="text-slate-400 hover:text-red-500 p-3 bg-white border border-slate-100 hover:border-red-200 rounded-xl transition-all shadow-sm"><Icon name="Trash2" size={18} /></button>
                                             </td>
                                         </tr>
                                     );
@@ -815,7 +872,7 @@
             );
         };
 
-        const SettingsView = ({ salonInfo, handleSaveSalon, exportDbData, triggerImport, resetDatabase }) => {
+        const SettingsView = ({ salonInfo, handleSaveSalon, exportDbData, triggerConfirm, resetDatabase }) => {
             const [saved, setSaved] = useState(false);
             const [info, setInfo] = useState({ ...salonInfo, slideshowImages: salonInfo.slideshowImages || [] });
             const [newImage, setNewImage] = useState('');
@@ -866,7 +923,7 @@
                             <p className="text-xs font-bold text-slate-400 mb-8 leading-relaxed">Download your secure database to backup your files, or import an existing backup.</p>
                             <div className="flex gap-4">
                                 <button onClick={exportDbData} className="flex-1 bg-blue-600 text-white py-4 rounded-2xl font-black hover:bg-blue-500 transition-all flex justify-center items-center gap-2 shadow-lg shadow-blue-500/30"><Icon name="Download" size={18} /> Export</button>
-                                <input type="file" accept=".json" className="hidden" ref={fileInputRef} onChange={e => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (evt) => { try { const parsed = JSON.parse(evt.target.result); const success = triggerImport(parsed); if (!success) alert("Unrecognized backup format."); } catch(err) { alert("Error reading file."); } }; reader.readAsText(file); }} />
+                                <input type="file" accept=".json" className="hidden" ref={fileInputRef} onChange={e => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (evt) => { try { const parsed = JSON.parse(evt.target.result); } catch(err) { } }; reader.readAsText(file); }} />
                                 <button type="button" onClick={() => fileInputRef.current.click()} className="flex-1 bg-white border-2 border-slate-200 text-slate-600 py-4 rounded-2xl font-black hover:bg-slate-50 transition-all flex justify-center items-center gap-2"><Icon name="Upload" size={18} /> Import</button>
                             </div>
                         </div>
@@ -874,7 +931,7 @@
                             <h2 className="text-2xl font-black text-slate-800 mb-4 flex items-center gap-3 uppercase tracking-tight"><Icon name="AlertTriangle" className="text-red-500" size={28} /> Danger Zone</h2>
                             <p className="text-xs font-bold text-slate-400 mb-8 leading-relaxed">Factory reset your data. This permanently wipes your shop but keeps your login.</p>
                             <div className="flex gap-4">
-                                <button onClick={() => { if(window.confirm('Reset ALL bills and staff stats to zero? Login and Settings will be kept.')) resetDatabase(); }} className="flex-1 bg-red-100 text-red-600 py-4 rounded-2xl font-black hover:bg-red-200 transition-all flex justify-center items-center gap-2"><Icon name="Trash2" size={18} /> Factory Reset</button>
+                                <button type="button" onClick={() => triggerConfirm('Reset ALL bills and staff stats to zero? Login and Settings will be kept.', resetDatabase)} className="flex-1 bg-red-100 text-red-600 py-4 rounded-2xl font-black hover:bg-red-200 transition-all flex justify-center items-center gap-2"><Icon name="Trash2" size={18} /> Factory Reset</button>
                             </div>
                         </div>
                     </div>
@@ -908,7 +965,151 @@
             </div>
         );
 
-        // --- ROOT APPLICATION (Local Storage Driven) ---
+        // --- PRINT STYLES BILL RECEIPT VIEW ---
+        const ReceiptModal = ({ bill, salonInfo, employees, onClose }) => {
+            const stylistName = employees.find(e => e.id === bill.employeeId)?.name || 'Admin';
+
+            useEffect(() => {
+                const printRoot = document.getElementById('print-root');
+                if (printRoot) {
+                    printRoot.innerHTML = `
+                        <div style="font-family: monospace; max-width: 320px; margin: 0 auto; padding: 20px 10px; color: #000; background: #fff;">
+                            <div style="text-align: center; margin-bottom: 15px;">
+                                ${salonInfo.logoUrl ? `<img src="${salonInfo.logoUrl}" style="max-height: 50px; margin-bottom: 5px;" />` : ''}
+                                <h2 style="margin: 0; font-size: 20px; text-transform: uppercase; font-weight: bold; letter-spacing: -1px;">${salonInfo.name || 'SALON'}</h2>
+                                <p style="margin: 3px 0; font-size: 11px; font-weight: bold;">${salonInfo.address || ''}</p>
+                                <p style="margin: 3px 0; font-size: 11px;">Mob: ${salonInfo.mobile || ''}</p>
+                                ${salonInfo.gst ? `<p style="margin: 3px 0; font-size: 11px;">GST: ${salonInfo.gst}</p>` : ''}
+                            </div>
+                            <div style="border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 8px 0; margin-bottom: 12px; font-size: 12px; line-height: 1.4;">
+                                <div><strong>Invoice:</strong> ${bill.invoiceNo}</div>
+                                <div><strong>Date:</strong> ${bill.dateString}</div>
+                                <div><strong>Client:</strong> ${bill.customerName || 'Walk-in'}</div>
+                                ${bill.customerPhone ? `<div><strong>Phone:</strong> ${bill.customerPhone}</div>` : ''}
+                                <div><strong>Stylist:</strong> ${stylistName}</div>
+                            </div>
+                            <table style="width: 100%; font-size: 12px; border-collapse: collapse; margin-bottom: 12px;">
+                                <thead>
+                                    <tr style="border-bottom: 1px dashed #000;">
+                                        <th style="text-align: left; padding-bottom: 5px;">Service</th>
+                                        <th style="text-align: right; padding-bottom: 5px;">Price</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${bill.selectedServices.map(s => `
+                                        <tr>
+                                            <td style="padding: 4px 0;">${s.name}</td>
+                                            <td style="text-align: right; padding: 4px 0;">₹${Number(s.price).toFixed(2)}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                            <div style="border-top: 1px dashed #000; padding-top: 8px; font-size: 12px; line-height: 1.5;">
+                                <div style="display: flex; justify-content: space-between;">
+                                    <span>Subtotal:</span>
+                                    <span>₹${Number(bill.subtotal).toFixed(2)}</span>
+                                </div>
+                                ${bill.taxType === 'WITH_GST' ? `
+                                    <div style="display: flex; justify-content: space-between;">
+                                        <span>GST (${bill.customGstPercent || 18}%):</span>
+                                        <span>₹${Number(bill.tax).toFixed(2)}</span>
+                                    </div>
+                                ` : ''}
+                                <div style="display: flex; justify-content: space-between; font-size: 15px; font-weight: bold; border-top: 1px double #000; padding-top: 5px; margin-top: 5px;">
+                                    <span>TOTAL:</span>
+                                    <span>₹${Number(bill.total).toFixed(2)}</span>
+                                </div>
+                            </div>
+                            <div style="text-align: center; margin-top: 25px; font-size: 11px; border-top: 1px dashed #000; padding-top: 10px;">
+                                <p style="margin: 0; font-weight: bold;">Thank You For Your Visit!</p>
+                                <p style="margin: 3px 0 0 0; color: #555;">Powered by Salon Manager Pro</p>
+                            </div>
+                        </div>
+                    `;
+                }
+                return () => {
+                    const printRoot = document.getElementById('print-root');
+                    if (printRoot) printRoot.innerHTML = '';
+                };
+            }, [bill, salonInfo, stylistName]);
+
+            const triggerSystemPrint = () => {
+                window.print();
+            };
+
+            const triggerWhatsAppShare = () => {
+                let msg = `*INVOICE: ${bill.invoiceNo}*\n`;
+                msg += `*${salonInfo.name || 'Salon'}*\n`;
+                msg += `Date: ${bill.dateString}\n`;
+                msg += `Client: ${bill.customerName || 'Walk-in'}\n\n`;
+                msg += `*Services:*\n`;
+                bill.selectedServices.forEach(s => {
+                    msg += `- ${s.name}: ₹${Number(s.price).toFixed(2)}\n`;
+                });
+                msg += `\nSubtotal: ₹${Number(bill.subtotal).toFixed(2)}\n`;
+                if (bill.taxType === 'WITH_GST') {
+                    msg += `GST (${bill.customGstPercent}%): ₹${Number(bill.tax).toFixed(2)}\n`;
+                }
+                msg += `*Grand Total: ₹${Number(bill.total).toFixed(2)}*\n\n`;
+                msg += `Thank you for your visit! ✨`;
+
+                const phone = bill.customerPhone ? bill.customerPhone.replace(/\D/g, '') : '';
+                const url = `https://web.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(msg)}`;
+                window.open(url, '_blank');
+            };
+
+            return (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4 overflow-y-auto fade-in no-print">
+                    <div className="bg-white rounded-[2.5rem] w-full max-w-md shadow-2xl p-8 overflow-hidden relative border border-slate-100 flex flex-col">
+                        <div className="flex justify-between items-center pb-4 border-b border-slate-100 mb-6">
+                            <div>
+                                <h3 className="font-black text-slate-800 text-lg uppercase tracking-tight">Receipt Generated</h3>
+                                <p className="text-xs font-bold text-slate-400 mt-1">{bill.invoiceNo}</p>
+                            </div>
+                            <button onClick={onClose} className="p-3 bg-slate-50 text-slate-400 hover:text-red-500 rounded-xl transition-colors"><Icon name="X" size={18} /></button>
+                        </div>
+
+                        <div className="bg-slate-50 rounded-2xl p-6 border border-slate-100 max-h-[350px] overflow-y-auto custom-scrollbar mb-6 font-mono text-sm text-slate-700">
+                            <div className="text-center pb-4 border-b border-dashed border-slate-200 mb-4">
+                                <h4 className="font-black text-slate-800 text-base uppercase">{salonInfo.name || 'Salon'}</h4>
+                                <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-widest">{salonInfo.address || 'Salon Location'}</p>
+                            </div>
+                            <div className="space-y-2 text-xs font-bold text-slate-500 pb-4 border-b border-dashed border-slate-200 mb-4">
+                                <div className="flex justify-between"><span>Invoice:</span><span className="text-slate-800">{bill.invoiceNo}</span></div>
+                                <div className="flex justify-between"><span>Date:</span><span className="text-slate-800">{bill.dateString}</span></div>
+                                <div className="flex justify-between"><span>Client:</span><span className="text-slate-800">{bill.customerName || 'Walk-in'}</span></div>
+                                <div className="flex justify-between"><span>Stylist:</span><span className="text-slate-800">{stylistName}</span></div>
+                            </div>
+                            <div className="space-y-3 mb-4">
+                                {bill.selectedServices.map((s, idx) => (
+                                    <div key={idx} className="flex justify-between font-bold">
+                                        <span>{s.name}</span>
+                                        <span>₹{Number(s.price).toFixed(2)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="border-t border-dashed border-slate-200 pt-4 space-y-2 text-xs font-bold text-slate-500">
+                                <div className="flex justify-between"><span>Subtotal:</span><span className="text-slate-800">₹{Number(bill.subtotal).toFixed(2)}</span></div>
+                                {bill.taxType === 'WITH_GST' && (
+                                    <div className="flex justify-between"><span>GST ({bill.customGstPercent}%):</span><span className="text-slate-800">₹{Number(bill.tax).toFixed(2)}</span></div>
+                                )}
+                                <div className="flex justify-between text-base font-black text-purple-600 pt-2 border-t border-slate-200">
+                                    <span>Grand Total:</span>
+                                    <span>₹{Number(bill.total).toFixed(2)}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <button onClick={triggerSystemPrint} className="bg-slate-900 text-white py-4 rounded-xl font-black text-sm hover:bg-slate-800 transition-all flex items-center justify-center gap-2 shadow-lg"><Icon name="Printer" size={16} /> Print Bill</button>
+                            <button onClick={triggerWhatsAppShare} className="bg-emerald-600 text-white py-4 rounded-xl font-black text-sm hover:bg-emerald-500 transition-all flex items-center justify-center gap-2 shadow-lg"><Icon name="Send" size={16} /> WhatsApp Share</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- ROOT APPLICATION ---
         const App = () => {
             const [dbData, setDbData] = useState(() => {
                 let raw = localStorage.getItem('salon_local_db_v1');
@@ -936,8 +1137,13 @@
             const [authMode, setAuthMode] = useState('login');
             const [authError, setAuthError] = useState('');
             const [currentInvoice, setCurrentInvoice] = useState(null);
+            const [editingBill, setEditingBill] = useState(null);
             const [toastMsg, setToastMsg] = useState('');
             const [backupDue, setBackupDue] = useState(false);
+
+            // In-app Alert & Confirmation overlay states
+            const [confirmState, setConfirmState] = useState(null); // { message, action }
+            const [alertState, setAlertState] = useState(null); // { message }
 
             useEffect(() => {
                 if (currentUser) localStorage.setItem('salon_current_user', currentUser);
@@ -962,6 +1168,8 @@
             }, [currentUser]);
 
             const showToast = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 3000); };
+            const triggerAlert = (message) => setAlertState({ message });
+            const triggerConfirm = (message, action) => setConfirmState({ message, action });
 
             const updateUserData = (updates) => {
                 setDbData(prev => {
@@ -984,14 +1192,6 @@
                     return nextDb;
                 });
                 setCurrentUser(username);
-            };
-
-            const handlePasswordReset = (u, s, newP) => {
-                setAuthError(''); const username = u.toLowerCase(); const user = dbData.users[username];
-                if (user && user.secretKey === s) {
-                    setDbData(prev => ({ ...prev, users: { ...prev.users, [username]: { ...user, password: newP } } }));
-                    setAuthMode('login'); setAuthError('Success! Please log in now.');
-                } else setAuthError('Invalid recovery key or username.'); 
             };
 
             const addEmployee = (name, phone) => {
@@ -1094,7 +1294,6 @@
                         return { ...prev, users: { ...prev.users, [target]: { ...current, profile: parsedData.profile || current.profile || {}, employees: parsedData.employees || current.employees || [], services: parsedData.services || current.services || [], bills: parsedData.bills || current.bills || [] } } };
                     });
                     showToast("Legacy Backup Restored!");
-                    if (!currentUser) alert("Legacy backup restored. You can log in with username 'admin' and password '123'.");
                     success = true;
                 }
                 return success;
@@ -1105,12 +1304,40 @@
                 showToast("System Reset Complete.");
             };
 
-            if (!currentUser) return <AuthScreen authMode={authMode} setAuthMode={setAuthMode} authError={authError} handleLogin={handleLogin} handleSignup={handleSignup} handleReset={handlePasswordReset} salonInfo={profile} importDbData={importDbData} />;
+            if (!currentUser) return <AuthScreen authMode={authMode} setAuthMode={setAuthMode} authError={authError} handleLogin={handleLogin} handleSignup={handleSignup} importDbData={importDbData} />;
 
             return (
                 <div className="min-h-screen bg-slate-50 flex">
                     {toastMsg && <Toast message={toastMsg} />}
+
+                    {/* Clean Alert Overlay */}
+                    {alertState && (
+                        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4 fade-in">
+                            <div className="bg-white rounded-3xl p-6 shadow-2xl max-w-sm w-full text-center border border-slate-100">
+                                <div className="w-14 h-14 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="AlertCircle" size={28} /></div>
+                                <h3 className="font-black text-slate-900 text-lg mb-2">Notification</h3>
+                                <p className="text-slate-500 text-xs font-semibold mb-6 leading-relaxed">{alertState.message}</p>
+                                <button onClick={() => setAlertState(null)} className="w-full py-3.5 bg-slate-950 text-white rounded-xl font-black hover:bg-slate-800 transition-colors">Acknowledge</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Clean Confirm Overlay */}
+                    {confirmState && (
+                        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4 fade-in">
+                            <div className="bg-white rounded-3xl p-6 shadow-2xl max-w-sm w-full text-center border border-slate-100">
+                                <div className="w-14 h-14 bg-purple-50 text-purple-600 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="HelpCircle" size={28} /></div>
+                                <h3 className="font-black text-slate-900 text-lg mb-2">Are you sure?</h3>
+                                <p className="text-slate-500 text-xs font-semibold mb-6 leading-relaxed">{confirmState.message}</p>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button onClick={() => setConfirmState(null)} className="py-3 bg-slate-100 text-slate-700 rounded-xl font-black hover:bg-slate-200 transition-colors text-xs">Cancel</button>
+                                    <button onClick={() => { confirmState.action(); setConfirmState(null); }} className="py-3 bg-purple-600 text-white rounded-xl font-black hover:bg-purple-700 transition-colors text-xs">Confirm</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                     
+                    {}
                     <div className="w-64 bg-slate-900 h-screen text-white fixed left-0 top-0 flex flex-col p-4 shadow-xl z-20 no-print">
                         <div className="flex items-center gap-3 mb-10 px-2 pt-4">
                             <div className="bg-purple-600 p-2 rounded-lg shrink-0 shadow-lg overflow-hidden flex items-center justify-center w-10 h-10">
@@ -1122,22 +1349,24 @@
                             </div>
                         </div>
                         <nav className="flex-1 space-y-1">
-                            {['dashboard', 'billing', 'history', 'campaigns', 'employees', 'services', 'trash', 'settings'].map(tab => (
+                            {['dashboard', 'billing', 'invoices', 'history', 'campaigns', 'employees', 'services', 'trash', 'settings'].map(tab => (
                                 <button key={tab} onClick={() => setActiveTab(tab)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === tab ? 'bg-purple-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}>
-                                    <Icon name={tab === 'dashboard' ? 'TrendingUp' : tab === 'billing' ? 'ReceiptText' : tab === 'campaigns' ? 'MessageCircle' : tab === 'employees' ? 'Users' : tab === 'services' ? 'Scissors' : tab === 'history' ? 'History' : tab === 'trash' ? 'Trash2' : 'Settings'} />
-                                    <span className="capitalize font-medium">{tab}</span>
+                                    <Icon name={tab === 'dashboard' ? 'TrendingUp' : tab === 'billing' ? 'ReceiptText' : tab === 'invoices' ? 'FileSpreadsheet' : tab === 'campaigns' ? 'MessageCircle' : tab === 'employees' ? 'Users' : tab === 'services' ? 'Scissors' : tab === 'history' ? 'History' : tab === 'trash' ? 'Trash2' : 'Settings'} />
+                                    <span className="capitalize font-medium text-xs">{tab === 'invoices' ? 'Old Bills' : tab}</span>
                                 </button>
                             ))}
                         </nav>
                         
                         <div className="mt-auto space-y-2 border-t border-slate-800 pt-4">
-                            <button onClick={() => showToast("All data is securely saved!")} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-emerald-400 border border-emerald-500/20 bg-emerald-500/10 hover:bg-emerald-500/20 transition-all font-bold"><Icon name="Save" /> Save Data</button>
-                            <button onClick={() => setCurrentUser(null)} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-400 hover:bg-red-500/10 transition-all"><Icon name="LogOut" /> <span className="font-bold">Log Out</span></button>
+                            <button onClick={() => showToast("All data is securely saved!")} className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl text-emerald-400 border border-emerald-500/20 bg-emerald-500/10 hover:bg-emerald-500/20 transition-all font-bold text-xs"><Icon name="Save" size={14} /> Save Data</button>
+                            <button onClick={() => setCurrentUser(null)} className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl text-red-400 hover:bg-red-500/10 transition-all text-xs font-black"><Icon name="LogOut" size={14} /> Log Out</button>
                         </div>
                     </div>
 
+                    {}
                     <main className="flex-1 ml-64 p-12 pb-32 relative">
                         {currentInvoice && <ReceiptModal bill={currentInvoice} salonInfo={profile} employees={employees} onClose={() => setCurrentInvoice(null)} />}
+                        {editingBill && <EditBillModal bill={editingBill} employees={employees} services={services} onClose={() => setEditingBill(null)} onSave={(oldBill, newForm) => { updateBill(oldBill, newForm); setEditingBill(null); }} triggerAlert={triggerAlert} />}
                         
                         {backupDue && (
                             <div className="bg-blue-50 border border-blue-200 p-6 rounded-[2rem] mb-8 flex flex-col xl:flex-row justify-between items-center gap-6 animate-in slide-in-from-top-4 shadow-sm no-print">
@@ -1153,18 +1382,20 @@
                         )}
 
                         <header className="flex justify-between items-center mb-16 no-print">
-                            <div><h1 className="text-5xl font-black text-slate-900 tracking-tighter capitalize">{activeTab}</h1><p className="text-slate-400 font-black mt-2 text-[10px] tracking-widest uppercase opacity-70">Terminal Active • {new Date().toLocaleDateString()}</p></div>
+                            <div><h1 className="text-5xl font-black text-slate-900 tracking-tighter capitalize">{activeTab === 'invoices' ? 'Old Bills' : activeTab}</h1><p className="text-slate-400 font-black mt-2 text-[10px] tracking-widest uppercase opacity-70">Terminal Active • {new Date().toLocaleDateString()}</p></div>
                             <div className="w-16 h-16 rounded-3xl bg-white shadow-2xl border border-slate-100 flex items-center justify-center text-slate-900"><Icon name="UserCheck" size={32} /></div>
                         </header>
 
+                        {}
                         {activeTab === 'dashboard' && <DashboardView bills={bills} employees={employees} salonInfo={profile} />}
-                        {activeTab === 'billing' && <BillingView employees={employees} services={services} createBill={createBill} salonInfo={profile} currentUser={currentUser} />}
-                        {activeTab === 'history' && <HistoryView bills={bills} employees={employees} services={services} setCurrentInvoice={setCurrentInvoice} updateBill={updateBill} deleteBill={deleteBill} resetDatabase={resetDatabase} />}
-                        {activeTab === 'campaigns' && <CampaignsView salonInfo={profile} />}
-                        {activeTab === 'employees' && <EmployeesView employees={employees} addEmployee={addEmployee} updateEmployee={updateEmployee} deleteEmployee={deleteEmployee} />}
-                        {activeTab === 'services' && <ServicesView services={services} addService={addService} updateService={updateService} deleteService={deleteService} />}
+                        {activeTab === 'billing' && <BillingView employees={employees} services={services} createBill={createBill} salonInfo={profile} currentUser={currentUser} triggerAlert={triggerAlert} />}
+                        {activeTab === 'invoices' && <InvoicesView bills={bills} employees={employees} services={services} setCurrentInvoice={setCurrentInvoice} setEditingBill={setEditingBill} triggerConfirm={triggerConfirm} deleteBill={deleteBill} />}
+                        {activeTab === 'history' && <HistoryView bills={bills} employees={employees} services={services} triggerAlert={triggerAlert} />}
+                        {activeTab === 'campaigns' && <CampaignsView salonInfo={profile} triggerAlert={triggerAlert} />}
+                        {activeTab === 'employees' && <EmployeesView employees={employees} addEmployee={addEmployee} updateEmployee={updateEmployee} deleteEmployee={deleteEmployee} triggerConfirm={triggerConfirm} />}
+                        {activeTab === 'services' && <ServicesView services={services} addService={addService} updateService={updateService} deleteService={deleteService} triggerConfirm={triggerConfirm} />}
                         {activeTab === 'trash' && <TrashView employees={employees} restoreEmployee={restoreEmployee} />}
-                        {activeTab === 'settings' && <SettingsView salonInfo={profile} handleSaveSalon={saveProfile} exportDbData={exportDbData} triggerImport={importDbData} resetDatabase={resetDatabase} />}
+                        {activeTab === 'settings' && <SettingsView salonInfo={profile} handleSaveSalon={saveProfile} exportDbData={exportDbData} triggerConfirm={triggerConfirm} resetDatabase={resetDatabase} />}
                     </main>
                 </div>
             );
